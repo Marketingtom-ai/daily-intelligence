@@ -1,0 +1,39 @@
+name: Daily Intelligence Generator
+
+on:
+  schedule:
+    # Ogni giorno alle 9:00 CET (8:00 UTC)
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Permette di eseguire manualmente da GitHub
+
+jobs:
+  generate-daily-intelligence:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install dotenv axios
+
+      - name: Generate Daily Intelligence
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: node scripts/generate-daily-intelligence.js
+
+      - name: Commit and push (if changes)
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "Daily Intelligence Bot"
+          git add -A
+          git commit -m "Daily Intelligence - $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push
+        continue-on-error: true
