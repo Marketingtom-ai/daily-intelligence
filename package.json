@@ -1,22 +1,9 @@
 {
-  "name": "daily-intelligence-generator",
+  "name": "markettisti-anonimi-notion-proxy",
   "version": "1.0.0",
-  "description": "Generates daily marketing intelligence for Markettisti Anonimi and saves to Notion",
-  "main": "scripts/generate-daily-intelligence.js",
-  "scripts": {
-    "generate": "node scripts/generate-daily-intelligence.js"
-  },
-  "keywords": [
-    "markettisti-anonimi",
-    "daily-intelligence",
-    "notion",
-    "claude-ai",
-    "marketing"
-  ],
-  "author": "Markettisti Anonimi",
-  "license": "MIT",
-  "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.3.1"
+  "description": "Proxy Notion API per Daily Intelligence - Markettisti Anonimi",
+  "private": true,
+  "engines": {
+    "node": ">=18"
   }
 }
