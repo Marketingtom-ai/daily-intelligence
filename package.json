@@ -1,9 +1,0 @@
-{
-  "name": "markettisti-anonimi-notion-proxy",
-  "version": "1.0.0",
-  "description": "Proxy Notion API per Daily Intelligence - Markettisti Anonimi",
-  "private": true,
-  "engines": {
-    "node": ">=18"
-  }
-}
