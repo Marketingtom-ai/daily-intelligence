@@ -1,8 +1,17 @@
 export default async function handler(req, res) {
-  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  console.log('=== API Call Started ===');
+  console.log('Method:', req.method);
+  console.log('Token exists:', !!process.env.NOTION_TOKEN);
+  console.log('Token preview:', process.env.NOTION_TOKEN?.slice(0, 10) + '...');
+
+  if (req.method === 'OPTIONS') { 
+    res.status(200).end(); 
+    return; 
+  }
 
   const token = process.env.NOTION_TOKEN;
   if (!token) {
+    console.error('ERROR: NOTION_TOKEN not set');
     return res.status(500).json({ error: 'NOTION_TOKEN non configurato' });
   }
 
@@ -25,9 +34,17 @@ export default async function handler(req, res) {
     try {
       const res = await fetch(
         `https://api.notion.com/v1/blocks/${pageId}/children?page_size=100`,
-        { headers: { 'Authorization': `Bearer ${token}`, 'Notion-Version': '2022-06-28' } }
+        { 
+          headers: { 
+            'Authorization': `Bearer ${token}`, 
+            'Notion-Version': '2022-06-28' 
+          } 
+        }
       );
-      if (!res.ok) return '';
+      if (!res.ok) {
+        console.warn(`Blocks fetch failed for ${pageId}:`, res.status);
+        return '';
+      }
       const data = await res.json();
       let html = '';
       for (const block of data.results) {
@@ -35,6 +52,149 @@ export default async function handler(req, res) {
           case 'paragraph':
             const pt = richTextToHtml(block.paragraph.rich_text);
             if (pt.trim()) html += `<p>${pt}</p>`;
+            break;
+          case 'heading_1':
+            html += `<h2>${richTextToHtml(block.heading_1.rich_text)}</h2>`; break;
+          case 'heading_2':
+            html += `<h3>${richTextToHtml(block.heading_2.rich_text)}</h3>`; break;
+          case 'heading_3':
+            html += `<h4>${richTextToHtml(block.heading_3.rich_text)}</h4>`; break;
+          case 'bulleted_list_item':
+            html += `<ul><li>${richTextToHtml(block.bulleted_list_item.rich_text)}</li></ul>`; break;
+          case 'numbered_list_item':
+            html += `<ol><li>${richTextToHtml(block.numbered_list_item.rich_text)}</li></ol>`; break;
+          case 'quote':
+            html += `<blockquote>${richTextToHtml(block.quote.rich_text)}</blockquote>`; break;
+        }
+      }
+      html = html.replace(/<\/ul>\s*<ul>/g,'').replace(/<\/ol>\s*<ol>/g,'');
+      return html;
+    } catch (e) {
+      console.error('Error fetching blocks:', e.message);
+      return '';
+    }
+  }
+
+  function splitTitolo(raw) {
+    const seps = [': ',' — ',' – ',' - '];
+    for (const sep of seps) {
+      const idx = raw.indexOf(sep);
+      if (idx > 10 && idx < raw.length - 5) {
+        return { 
+          titolo: raw.slice(0,idx).replace(/^OGGI:\s*/i,'').trim(), 
+          sottotitolo: raw.slice(idx+sep.length).trim() 
+        };
+      }
+    }
+    return { 
+      titolo: raw.replace(/^OGGI:\s*/i,'').trim(), 
+      sottotitolo: '' 
+    };
+  }
+
+  function parseFonti(src) {
+    if (!src) return [];
+    const urlRe = /https?:\/\/[^\s,;)]+/g;
+    const urls = src.match(urlRe) || [];
+    return urls.slice(0,4).map((url,i) => {
+      try { 
+        const hostname = new URL(url).hostname.replace('www.','');
+        return { nome: hostname.split('.')[0], url };
+      } catch { 
+        return { nome: `Fonte ${i+1}`, url }; 
+      }
+    });
+  }
+
+  try {
+    console.log('Starting Notion API call for database:', DATABASE_ID);
+    
+    let pages = [], cursor;
+    do {
+      const body = { 
+        page_size: 100, 
+        sorts: [{ property: 'Data', direction: 'descending' }], 
+        ...(cursor && { start_cursor: cursor }) 
+      };
+      
+      console.log('Fetching pages with cursor:', cursor ? 'yes' : 'no');
+      
+      const r = await fetch(`https://api.notion.com/v1/databases/${DATABASE_ID}/query`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`, 
+          'Notion-Version': '2022-06-28', 
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(body)
+      });
+      
+      console.log('Notion API response status:', r.status);
+      
+      if (!r.ok) { 
+        const e = await r.json(); 
+        console.error('Notion API error:', JSON.stringify(e));
+        return res.status(r.status).json({ 
+          error: 'Notion API error',
+          details: e,
+          status: r.status
+        }); 
+      }
+      
+      const d = await r.json();
+      console.log('Got', d.results.length, 'results');
+      pages = pages.concat(d.results);
+      cursor = d.has_more ? d.next_cursor : undefined;
+    } while (cursor);
+
+    console.log('Total pages fetched:', pages.length);
+
+    const articles = await Promise.all(pages.map(async (page, idx) => {
+      try {
+        const props = page.properties;
+        const raw = props.Titolo?.title?.map(t => t.plain_text).join('') || '';
+        const { titolo, sottotitolo } = splitTitolo(raw);
+        const categoria = props.Categoria?.select?.name || 'News';
+        const data = props.Data?.date?.start || page.created_time?.slice(0,10) || '';
+        const trendSource = props['Trend Source']?.rich_text?.map(t => t.plain_text).join('') || '';
+        
+        let contenuto = props.Contenuto?.rich_text?.map(t => t.plain_text).join('') || '';
+        if (!contenuto.trim()) {
+          contenuto = await blocksToHtml(page.id);
+        } else {
+          contenuto = contenuto.split(/\n\n+/).filter(p=>p.trim()).map(p=>`<p>${p.trim()}</p>`).join('');
+        }
+        
+        return {
+          id: page.id.replace(/-/g,'').slice(0,16),
+          notion_id: page.id,
+          titolo, sottotitolo, categoria, data,
+          trend_source: trendSource,
+          contenuto,
+          fonti: parseFonti(trendSource)
+        };
+      } catch (e) {
+        console.error(`Error processing page ${idx}:`, e.message);
+        return null;
+      }
+    }));
+
+    const filtered = articles.filter(a => a && a.titolo && a.contenuto);
+    console.log('Final articles after filtering:', filtered.length);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+    res.status(200).json(filtered);
+  } catch (err) {
+    console.error('=== HANDLER ERROR ===');
+    console.error('Message:', err.message);
+    console.error('Stack:', err.stack);
+    res.status(500).json({ 
+      error: 'Server error', 
+      message: err.message 
+    });
+  }
+}            if (pt.trim()) html += `<p>${pt}</p>`;
             break;
           case 'heading_1':
             html += `<h2>${richTextToHtml(block.heading_1.rich_text)}</h2>`; break;
